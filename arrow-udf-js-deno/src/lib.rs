@@ -594,6 +594,8 @@ impl Stream for RecordBatchIterInternal {
         let mut indexes = Int32Builder::with_capacity(inner.chunk_size);
         let mut results = Vec::with_capacity(inner.input.num_rows());
 
+        tracing::info!("Getting promise");
+
         let promise = {
             let p = inner.promise.borrow();
             p.clone()
@@ -602,6 +604,7 @@ impl Stream for RecordBatchIterInternal {
         let mut continue_processing = true;
 
         if let Some(promise) = promise {
+            tracing::info!("Promise was returned, checking state");
             continue_processing = false;
             let promise = ::v8::Local::<::v8::Promise>::new(scope, promise);
             match promise.state() {
@@ -616,15 +619,18 @@ impl Stream for RecordBatchIterInternal {
                     }
                 },
                 ::v8::PromiseState::Fulfilled => {
+                    tracing::info!("Promise fulfilled");
                     _ = inner.promise.take();
                     let value = promise.result(scope);
                     if matches!(inner.state, RecordBatchIterState::WaitingForIteratorPromise) {
+                        tracing::info!("Getting generated object and function");
                         let (gen, next) = Self::get_generator_and_function(scope, value)?;
                         let mut generator = inner.generator.borrow_mut();
                         *generator = Some((gen, next));
                         drop(generator);
                         continue_processing = true;
                     } else {
+                        tracing::info!("Getting generated object from promise result");
                         let (value, done) = Self::get_generated_object(scope, value)?;
                         if done {
                             let mut row = inner.row.borrow_mut();
@@ -650,6 +656,7 @@ impl Stream for RecordBatchIterInternal {
                     inner.state = RecordBatchIterState::Processing;
                 }
                 ::v8::PromiseState::Rejected => {
+                    tracing::info!("Promise rejected");
                     let exception = promise.result(scope);
                     inner.state = RecordBatchIterState::Processing;
                     return Poll::Ready(Some(v8::V8::exception_to_err_result(
@@ -687,6 +694,8 @@ impl Stream for RecordBatchIterInternal {
 
                     let try_catch = &mut ::v8::TryCatch::new(scope);
 
+                    tracing::info!("Evaluating function");
+
                     let js_function = ::v8::Local::<::v8::Function>::new(
                         try_catch,
                         inner.function.function.clone(),
@@ -694,9 +703,12 @@ impl Stream for RecordBatchIterInternal {
 
                     let recv = ::v8::undefined(try_catch).into();
 
+                    tracing::info!("calling function");
+
                     match js_function.call(try_catch, recv, &row) {
                         Some(gen) => {
                             if gen.is_promise() {
+                                tracing::info!("Promise received from the function");
                                 let promise = match ::v8::Local::<::v8::Promise>::try_from(gen) {
                                     Ok(promise) => promise,
                                     Err(_) => {
@@ -716,6 +728,7 @@ impl Stream for RecordBatchIterInternal {
                             generator.insert((gen, next))
                         }
                         None => {
+                            tracing::info!("Failed to execute the function");
                             assert!(try_catch.has_caught());
                             //Avoids killing the isolate even if it was requested
                             if try_catch.is_execution_terminating() {
@@ -737,10 +750,11 @@ impl Stream for RecordBatchIterInternal {
 
                 let next = ::v8::Local::new(scope, next.clone());
                 let try_catch = &mut ::v8::TryCatch::new(scope);
-
+                tracing::info!("Calling next function");
                 match next.call(try_catch, recv.into(), &[]) {
                     Some(object) => {
                         if object.is_promise() {
+                            tracing::info!("Received a promise from the next function");
                             let promise = match ::v8::Local::<::v8::Promise>::try_from(object) {
                                 Ok(promise) => promise,
                                 Err(_) => {
@@ -754,6 +768,7 @@ impl Stream for RecordBatchIterInternal {
                             inner.state = RecordBatchIterState::WaitingForNextPromise;
                             break;
                         } else {
+                            tracing::info!("Getting generated object");
                             let (value, done) = Self::get_generated_object(try_catch, object)?;
 
                             if done {
