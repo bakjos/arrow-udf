@@ -88,7 +88,18 @@ impl RecordBatchIter {
                 let mut inner = self.inner.clone();
                 tracing::info!("Using local pool to spawn next");
                 self.local_pool
-                    .spawn_pinned(|| async move { inner.next().await })
+                    .spawn_pinned(|| async move {
+                        {
+                            let thread = std::thread::current();
+                            tracing::info!(
+                                "Calling next using thread {}: {:?}",
+                                thread.name().unwrap_or("unnamed"),
+                                thread.id()
+                            );
+                        }
+
+                        inner.next().await
+                    })
                     .await
                     .unwrap()
             }
@@ -312,6 +323,15 @@ impl InternalRuntime {
     ) -> Result<()> {
         let mut js_runtime = self.deno_runtime.borrow_mut();
         let scope = &mut js_runtime.handle_scope();
+        {
+            let thread = std::thread::current();
+            tracing::info!(
+                "Add function {} using thread {}: {:?}",
+                name,
+                thread.name().unwrap_or("unnamed"),
+                thread.id()
+            );
+        }
 
         let module = crate::v8::V8::compile_module(scope, name, code)?;
 
