@@ -569,6 +569,7 @@ impl RecordBatchIterInternal {
 
         let gen = ::v8::Global::new(scope, gen);
         let next = ::v8::Global::new(scope, next);
+        tracing::info!("Generator and next function obtained");
         Ok((gen, next))
     }
 }
