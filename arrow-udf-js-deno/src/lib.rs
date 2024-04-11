@@ -82,9 +82,11 @@ impl RecordBatchIter {
     pub async fn next(&mut self) -> Option<Result<RecordBatch>> {
         if let Ok(current) = tokio::runtime::Handle::try_current() {
             if current.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+                tracing::info!("Using current thread");
                 self.inner.next().await
             } else {
                 let mut inner = self.inner.clone();
+                tracing::info!("Using local pool to spawn next");
                 self.local_pool
                     .spawn_pinned(|| async move { inner.next().await })
                     .await
@@ -118,8 +120,10 @@ impl RecordBatchIter {
     pub async fn try_next(&mut self) -> Result<Option<RecordBatch>> {
         if let Ok(current) = tokio::runtime::Handle::try_current() {
             if current.runtime_flavor() == tokio::runtime::RuntimeFlavor::CurrentThread {
+                tracing::info!("Using local pool to spawn try_next");
                 self.inner.try_next().await
             } else {
+                tracing::info!("Using local pool to spawn try_next");
                 let mut inner = self.inner.clone();
                 self.local_pool
                     .spawn_pinned(|| async move { inner.try_next().await })
@@ -703,10 +707,11 @@ impl Stream for RecordBatchIterInternal {
 
                     let recv = ::v8::undefined(try_catch).into();
 
-                    tracing::info!("calling function");
+                    tracing::info!("Calling function");
 
                     match js_function.call(try_catch, recv, &row) {
                         Some(gen) => {
+                            tracing::info!("Received function result");
                             if gen.is_promise() {
                                 tracing::info!("Promise received from the function");
                                 let promise = match ::v8::Local::<::v8::Promise>::try_from(gen) {
@@ -724,6 +729,7 @@ impl Stream for RecordBatchIterInternal {
                                 waker.wake();
                                 return Poll::Pending;
                             }
+                            tracing::info!("Promise received from the function");
                             let (gen, next) = Self::get_generator_and_function(try_catch, gen)?;
                             generator.insert((gen, next))
                         }
